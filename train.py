@@ -36,12 +36,13 @@ params = {
     'test_postfix': "test.pkl",
     'test_label_postfix': "test_label.pkl",
     'train_label_postfix': "train_label.pkl",
+    'positive': True,
     'dim': 38,
-    'entity': ['machine-1-2'],
+    'entity': ['machine-1-4'],
     'valid_ratio': 0,
     'normalize': "minmax",
     'window_size': 20,
-    'stride': 1,
+    'stride': 10,
     'batch_size': 32,
     'num_workers': 0,
     'device': torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
@@ -127,112 +128,216 @@ def get_positive_label(model, item, threshold=0.5):
 for entity in params['entity']:
     logging.info("Fitting dataset: {}".format(entity))
 
-    train = True
-    test = True
-    get_positive = True
+    if params['positive']:
+        train = True
+        test = True
+        get_positive = True
 
-    encoder = RTAnomaly(
-        ndim=params['dim'],
-        len_window=params['window_size'],
-        gnn_dim=params['gnn_dim'],
-        pooling_ratio=params['pooling_ratio'],
-        threshold=params['threshold'],
-        dropout=params['dropout'],
-        filters=params['filters'],
-        kernels=params['kernels'],
-        dilation=params['dilation'],
-        layers=params['layers'],
-        gru_dim=params['gru_dim'],
-        device=params['device'],
-        recon_filter=params['recon_filter'],
-        hidden_size=params['hidden_size'],
-        latent_size=params['latent_size']
-    )
+        encoder = RTAnomaly(
+            ndim=params['dim'],
+            len_window=params['window_size'],
+            gnn_dim=params['gnn_dim'],
+            pooling_ratio=params['pooling_ratio'],
+            threshold=params['threshold'],
+            dropout=params['dropout'],
+            filters=params['filters'],
+            kernels=params['kernels'],
+            dilation=params['dilation'],
+            layers=params['layers'],
+            gru_dim=params['gru_dim'],
+            device=params['device'],
+            recon_filter=params['recon_filter'],
+            hidden_size=params['hidden_size'],
+            latent_size=params['latent_size']
+        )
 
-    encoder.to(params['device'])
+        encoder.to(params['device'])
 
-    optimizer = optim.Adam(encoder.parameters(),
-                           lr=params['lr'], weight_decay=params['wd'])
+        optimizer = optim.Adam(encoder.parameters(),
+                               lr=params['lr'], weight_decay=params['wd'])
 
-    if get_positive:
-        get_positive_label(encoder, entity)
+        if get_positive:
+            get_positive_label(encoder, entity)
 
-    train_dict = load_dataset(
-        data_root=params["data_root"],
-        entities=params["entity"],
-        dim=params["dim"],
-        valid_ratio=params["valid_ratio"],
-        test_label_postfix=params["test_label_postfix"],
-        test_postfix=params["test_postfix"],
-        train_postfix=params["train_postfix"],
-        train_label_postfix=params["train_label_postfix"]
-    )
+        train_dict = load_dataset(
+            data_root=params["data_root"],
+            entities=params["entity"],
+            dim=params["dim"],
+            valid_ratio=params["valid_ratio"],
+            test_label_postfix=params["test_label_postfix"],
+            test_postfix=params["test_postfix"],
+            train_postfix=params["train_postfix"],
+            train_label_postfix=params["train_label_postfix"]
+        )
 
-    train_dict = normalize(train_dict, method=params["normalize"])
+        train_dict = normalize(train_dict, method=params["normalize"])
 
-    window = generate_windows(
-        train_dict,
-        window_size=params["window_size"],
-        stride=params["stride"],
-        positive_label=True
-    )
+        window = generate_windows(
+            train_dict,
+            window_size=params["window_size"],
+            stride=params["stride"],
+            positive_label=True
+        )
 
-    train_windows = window[entity]['train_windows']
-    test_windows = window[entity]['test_windows']
-    test_labels = window[entity]['test_label'][:, -1].reshape(-1, 1)
-    train_labels = window[entity]['train_label'][:, -1].reshape(-1, 1)
+        train_windows = window[entity]['train_windows']
+        test_windows = window[entity]['test_windows']
+        test_labels = window[entity]['test_label'][:, -1].reshape(-1, 1)
+        train_labels = window[entity]['train_label'][:, -1].reshape(-1, 1)
 
-    train_loader, _, test_loader = get_positive_dataloaders(
-        train_windows,
-        train_labels,
-        test_windows,
-        batch_size=params["batch_size"],
-        num_workers=params["num_workers"]
-    )
+        train_loader, _, test_loader = get_positive_dataloaders(
+            train_windows,
+            train_labels,
+            test_windows,
+            batch_size=params["batch_size"],
+            num_workers=params["num_workers"]
+        )
 
-    if train:
-        encoder.train()
-        for epoch in range(params['epoch']):
-            loss = 0
-            for i, (x, y) in enumerate(tqdm(train_loader)):
-                if x.shape[0] == 1:
-                    continue
+        if train:
+            encoder.train()
+            for epoch in range(params['epoch']):
+                loss = 0
+                for i, (x, y) in enumerate(tqdm(train_loader)):
+                    if x.shape[0] == 1:
+                        continue
 
-                x = x.to(params['device'])  # 先放GPU上
-                x = x.permute(0, 2, 1)
-                y = y.to(params['device'])
+                    x = x.to(params['device'])  # 先放GPU上
+                    x = x.permute(0, 2, 1)
+                    y = y.to(params['device'])
 
-                optimizer.zero_grad()
-                x_recon, recon_embed, embed, mu, log_var = encoder(x, y)
+                    optimizer.zero_grad()
+                    x_recon, recon_embed, embed, mu, log_var = encoder(x, y)
 
-                # loss 部分可以加入别的部分, 有一定作用
-                # loss_train = loss_function_positive(x, x_recon, recon_embed, embed, mu, log_var, y, cof=params['cof'])
-                loss_train = loss_function(x, x_recon, recon_embed, embed, mu, log_var, cof=params['cof'])
-                loss += loss_train
+                    # loss 部分可以加入别的部分, 有一定作用
+                    loss_train = loss_function_positive(x, x_recon, recon_embed, embed, mu, log_var, y,
+                                                        cof=params['cof'])
+                    loss += loss_train
 
-                loss_train.backward()
-                optimizer.step()
+                    loss_train.backward()
+                    optimizer.step()
 
-            loss /= train_loader.__len__()
-            print(f'Training loss for epoch {epoch} is: {float(loss)}')
+                loss /= train_loader.__len__()
+                print(f'Training loss for epoch {epoch} is: {float(loss)}')
 
-            torch.save(encoder.state_dict(), './save/checkpoint_' + entity + '.pth')
+                torch.save(encoder.state_dict(), './save/checkpoint_' + entity + '.pth')
 
-    if test:
-        logging.info("Finish dataset: {}".format(entity))
-        encoder.load_state_dict(torch.load('./save/checkpoint_' + entity + '.pth'))
-        encoder.eval()
+        if test:
+            logging.info("Finish dataset: {}".format(entity))
+            encoder.load_state_dict(torch.load('./save/checkpoint_' + entity + '.pth'))
+            encoder.eval()
 
-        score = minmax_score(get_anomaly_score(test_loader, encoder, params['device'], 1))
-        np.save(f'./score/score_{entity}.npy', score)
+            score = minmax_score(get_anomaly_score(test_loader, encoder, params['device'], 1))
+            np.save(f'./score/score_{entity}.npy', score)
 
-        plt.plot(test_labels)
-        plt.plot(score)
-        plt.savefig(f'./save/checkpoint_{entity}.jpg', dpi=600)
-        plt.close()
+            plt.plot(test_labels)
+            plt.plot(score)
+            plt.savefig(f'./save/checkpoint_{entity}.jpg', dpi=600)
+            plt.close()
 
-    eval_score = np.load(f'./score/score_{entity}.npy')
-    test_labels = test_labels.flatten()
-    pred, pred_adjust, _ = compute_prediction(eval_score, test_labels).values()
+        eval_score = np.load(f'./score/score_{entity}.npy')
+        test_labels = test_labels.flatten()
+        pred, pred_adjust, _ = compute_prediction(eval_score, test_labels).values()
 
-    print(f'Results for {entity}:' + str(compute_binary_metrics(pred_adjust, test_labels)))
+        print(f'Results for {entity}:' + str(compute_binary_metrics(pred_adjust, test_labels)))
+
+    else:
+        data_dict = load_dataset(
+            data_root=params["data_root"],
+            entities=params["entity"],
+            dim=params["dim"],
+            valid_ratio=params["valid_ratio"],
+            test_label_postfix=params["test_label_postfix"],
+            test_postfix=params["test_postfix"],
+            train_postfix=params["train_postfix"],
+        )
+
+        data_dict = normalize(data_dict, method=params["normalize"])
+
+        # sliding windows
+        window_dict = generate_windows(
+            data_dict,
+            window_size=params["window_size"],
+            stride=params["stride"]
+        )
+
+        train_windows = window_dict[entity]['train_windows']
+        test_windows = window_dict[entity]['test_windows']
+        test_labels = window_dict[entity]['test_label'][:, -1].reshape(-1, 1)
+
+        train_loader, _, test_loader = get_dataloaders(
+            train_windows,
+            test_windows,
+            batch_size=params["batch_size"],
+            num_workers=params["num_workers"]
+        )
+
+        encoder = RTAnomaly(
+            ndim=params['dim'],
+            len_window=params['window_size'],
+            gnn_dim=params['gnn_dim'],
+            pooling_ratio=params['pooling_ratio'],
+            threshold=params['threshold'],
+            dropout=params['dropout'],
+            filters=params['filters'],
+            kernels=params['kernels'],
+            dilation=params['dilation'],
+            layers=params['layers'],
+            gru_dim=params['gru_dim'],
+            device=params['device'],
+            recon_filter=params['recon_filter'],
+            hidden_size=params['hidden_size'],
+            latent_size=params['latent_size']
+        )
+
+        encoder.to(params['device'])
+
+        optimizer = optim.Adam(encoder.parameters(),
+                               lr=params['lr'], weight_decay=params['wd'])
+
+        train = True
+        test = True
+
+        if train:
+            encoder.train()
+            for epoch in range(params['epoch']):
+                loss = 0
+                for i, x in enumerate(tqdm(train_loader)):
+                    if x.shape[0] == 1:
+                        continue
+
+                    x = x.to(params['device'])  # 先放GPU上
+                    x = x.permute(0, 2, 1)
+                    train_label = torch.zeros((x.shape[0], 1)).to(params['device'])
+
+                    optimizer.zero_grad()
+                    x_recon, recon_embed, embed, mu, log_var = encoder(x, train_label)
+
+                    # loss 部分可以加入别的部分, 有一定作用
+                    loss_train = loss_function(x, x_recon, recon_embed, embed, mu, log_var, cof=params['cof'])
+                    loss += loss_train
+
+                    loss_train.backward()
+                    optimizer.step()
+
+                loss /= train_loader.__len__()
+                print(f'Training loss for epoch {epoch} is: {float(loss)}')
+
+                torch.save(encoder.state_dict(), './save/checkpoint_' + entity + '.pth')
+
+        if test:
+            logging.info("Finish dataset: {}".format(entity))
+            encoder.load_state_dict(torch.load('./save/checkpoint_' + entity + '.pth'))
+            encoder.eval()
+
+            score = minmax_score(get_anomaly_score(test_loader, encoder, params['device'], 1))
+            np.save(f'./score/score_{entity}.npy', score)
+
+            plt.plot(test_labels)
+            plt.plot(score)
+            plt.savefig(f'./save/checkpoint_{entity}.jpg', dpi=600)
+            plt.close()
+
+        eval_score = np.load(f'./score/score_{entity}.npy')
+        test_labels = test_labels.flatten()
+        pred, pred_adjust, _ = compute_prediction(eval_score, test_labels).values()
+
+        print(f'Results for {entity}:' + str(compute_binary_metrics(pred_adjust, test_labels)))

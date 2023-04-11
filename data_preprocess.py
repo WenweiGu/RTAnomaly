@@ -57,7 +57,7 @@ def get_windows(ts, labels=None, window_size=128, stride=1, dim=None):
         return np.array(windows, dtype=np.float32), None
 
 
-def generate_windows(data_dict, window_size=100, nrows=None, stride=1):
+def generate_windows(data_dict, window_size=100, nrows=None, stride=1, positive_label=False):
     logging.info("Generating sliding windows (size {}).".format(window_size))
     results = defaultdict(dict)
     for dataname, subdata_dict in data_dict.items():
@@ -66,10 +66,18 @@ def generate_windows(data_dict, window_size=100, nrows=None, stride=1):
                 continue
             data = subdata_dict[k][0:nrows]
             if k == "train":
-                data_windows, _ = get_windows(
-                    data, window_size=window_size, stride=stride
-                )
-                results[dataname]["train_windows"] = data_windows
+                if not positive_label:
+                    data_windows, _ = get_windows(
+                        data, window_size=window_size, stride=stride
+                    )
+                    results[dataname]["train_windows"] = data_windows
+                else:
+                    train_label = subdata_dict["train_label"][0:nrows]
+                    data_windows, train_label = get_windows(
+                        data, train_label, window_size=window_size, stride=stride
+                    )
+                    results[dataname]["train_windows"] = data_windows
+                    results[dataname]["train_label"] = train_label
                 logging.info("Windows for {} #: {}".format(k, data_windows.shape))
             if k == "valid":
                 data_windows, _ = get_windows(

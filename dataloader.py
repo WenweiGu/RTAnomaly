@@ -35,6 +35,7 @@ def load_dataset(
     train_postfix,
     nan_value=0,
     nrows=None,
+    train_label_postfix=None
 ):
     """
     use_dim: dimension used in multivariate timeseries
@@ -65,6 +66,11 @@ def load_dataset(
             os.path.join(data_root, "{}_{}".format(dataname, test_label_postfix)), "rb"
         ) as f:
             data[dataname]["test_label"] = pickle.load(f).reshape(-1)[0:nrows]
+        if train_label_postfix is not None:
+            with open(
+                os.path.join(data_root, "{}_{}".format(dataname, train_label_postfix)), "rb"
+            ) as f:
+                data[dataname]["train_label"] = pickle.load(f).reshape(-1)[0:nrows]
     logging.info("Loading {} entities done.".format(len(entities)))
     logging.info(
         "Train/Valid/Test: {}/{}/{} lines.".format(
@@ -93,6 +99,20 @@ class sliding_window_dataset(Dataset):
         return len(self.data)
 
 
+class sliding_window_positive(Dataset):
+    def __init__(self, data, label):
+        self.data = data
+        self.label = label
+
+    def __getitem__(self, index):
+        x = self.data[index]
+        y = self.label[index]
+        return x, y
+
+    def __len__(self):
+        return len(self.data)
+
+
 def get_dataloaders(
     train_data,
     test_data,
@@ -105,6 +125,43 @@ def get_dataloaders(
 
     train_loader = DataLoader(
         sliding_window_dataset(train_data, next_steps),
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+    )
+
+    test_loader = DataLoader(
+        sliding_window_dataset(test_data, next_steps),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+    )
+
+    if valid_data is not None:
+        valid_loader = DataLoader(
+            sliding_window_dataset(valid_data, next_steps),
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+        )
+    else:
+        valid_loader = None
+    return train_loader, valid_loader, test_loader
+
+
+def get_positive_dataloaders(
+    train_data,
+    train_label,
+    test_data,
+    valid_data=None,
+    next_steps=0,
+    batch_size=32,
+    shuffle=True,
+    num_workers=1,
+):
+
+    train_loader = DataLoader(
+        sliding_window_positive(train_data, train_label),
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,

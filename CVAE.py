@@ -60,11 +60,21 @@ class CVAE(nn.Module):
         return self.decode(z, c), mu, log_var
 
 
-# Reconstruction + KL divergence losses summed over all elements and batch
 def loss_function(x, x_recon, recon_embed, embed, mu, log_var, cof):
     RCE = torch.sqrt(F.mse_loss(x, x_recon))
     BCE = F.l1_loss(recon_embed, embed.view(-1, embed.shape[1]), reduction='mean')  # 改成了L1损失
     # https://arxiv.org/abs/1312.6114
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+    KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+    return RCE + cof * (BCE + KLD)
+
+
+# Reconstruction + KL divergence losses summed over all elements and batch
+def loss_function_positive(x, x_recon, recon_embed, embed, mu, log_var, y, cof):
+    square = torch.square(x - x_recon) * (1 - 2 * y).unsqueeze(2)
+    RCE = torch.sqrt(torch.mean(square))
+
+    absolute = torch.abs(recon_embed - embed.view(-1, embed.shape[1])) * (1 - 2 * y).unsqueeze(2)
+    BCE = torch.mean(absolute)
     KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
     return RCE + cof * (BCE + KLD)
